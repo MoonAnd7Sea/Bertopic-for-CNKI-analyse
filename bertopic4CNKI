@@ -1,0 +1,346 @@
+#%% md
+# 用于知网题录摘要分析的BERTopic
+#%% md
+一些说明：
+0.知网获取的题录要另存为xlsx格式到题录文件夹，知网的题录表格有些奇怪的毛病，python读取不出来，需要另存为通用的Excel格式，即xlsx格式才能正常读取。
+1.python版本建议3.6或3.7,3.8至3.10可能会有些库不兼容，而3.11和3.12大概率会出问题。可能需要安装的库：jieba（或jieba_fast） hdbscan bertopic 并请尽量在anaconda环境的基础上使用此代码。
+提示：bertopic库的安装或许存在一些坑，但是，经测试，从清华源载入的却不易报错。hdbscanze 建议用pycharmd内置的工具安装或手动安装该库，pip似乎并不能直接安装hdbscan。可以尝试安装hdbscan-with-cosine-distance库作为替代。如上述方法无法解决，可运行以下指令(单元去掉注释用的井号#并运行)：
+    pip install hdbscan
+    conda install -c conda-forge hdbscan
+    conda install -c zeus1942 hdbscan
+    pip install BERTopic
+    如果第一条失败，则运行第二条，第二条失败再运行第三条；如果第一条成功，则直接运行第四条。运行成功则重启jupyter然后将这几行恢复注释，运行后面的代码
+2.[模型参数详解](https://maartengr.github.io/BERTopic/getting_started/quickstart/quickstart.html)在使用bertopic前应对模型有所了解，不同的参数配置会产生不一样的效果，一个理想的结果是使用不同参数搭配反复调试之后得到的。代码所提供的是经笔者测试较为通用的搭配，最适合您的语料的参数搭配未必是当前的搭配。
+3.bertopic应用于中文的另一种分词方式是在sklearn中构建jieba分词器，但是经测试，效果较差，故采用了现在的预先分词的方式。
+4.stop_words_jieba.txt和stop_words_sklearn是两个停用词表，其作用不同，前者用于必要的文本清洗，过度清洗会影响语义模型的正常运作，其停用词需非常谨慎的添加；后者是标准的停用词表，可以将不需要的词语直接写到里面，注意格式为每行一个词语，最后一行不能空行，添加之后保存再重新运行代码。
+5.句嵌入模型(embedding model)的选择有很大的自由度，models文件夹中提供经测试中文或中英混合效果较好的两组模型：
+    <1> m3e系列模型，这是一个在严肃文本上表现较好的模型（学术文本建议使用base或large模型）
+    <2> 二郎神系列模型的longform-330M版本，纯中文微调，使用时请引用以下论文： Wang J, Zhang Y, Zhang L, et al. Fengshenbang 1.0: Being the foundation of chinese cognitive intelligence[J]. arXiv preprint arXiv:2209.02970, 2022.
+    <3>更多模型可从hugging face获取，参数填写方式：embedding_model='huggingface模型链接中co后面的部分'，如
+    embedding_model = 'moka-ai/m3e-base'   然后就会自动从hugging face下载（但须注意网络连接问题）
+6.句嵌入模型是整个代码运行中耗时最长的部分，建议具有英伟达显卡的机器运行。若无相应独显，而是在CPU上运行，对超过3000的样本量进行处理时，运行时间可能超过20分钟。
+7.可替换hanlp分词，对命名实体的识别效果有提高，当语料涉及大量命名实体时，考虑使用该分词方法。
+
+#%%
+# pip install hdbscan
+#%%
+# conda install -c conda-forge hdbscan
+#%%
+# conda install -c zeus1942 hdbscan
+#%%
+# pip install BERTopic
+#%%
+# pip install jieba
+#%% md
+# 数据
+#%%
+import pandas as pd
+import os
+#%%
+# -i https://pypi.tuna.tsinghua.edu.cn/simple
+#%%
+# 将知网下载的xls格式题录（导出）另存为xlsx格式放到题录文件夹中，可以多个文件
+# 注意：这一段只执行一次，重复执行会导致重复读取
+folder_path = os.getcwd() + '\\' +'题录文件夹'
+data0 = pd.DataFrame()
+for file_name in os.listdir(folder_path):
+    # 确保文件是 Excel 文件
+    if file_name.endswith(".xlsx"):
+        # 构建完整的文件路径
+        file_path = os.path.join(folder_path, file_name)
+        # 读取 Excel 文件
+        df = pd.read_excel(file_path)
+        # 将当前文件的数据合并到总的 DataFrame 中
+        data0 = pd.concat([data0, df], ignore_index=True)
+
+# data = data0.head(1000) # 量大的话（比如>3000）先在减量版本上进行测试，如果减量也有好结果，再迁移到更大的样本上
+# # CNKI题录量较少的不需要减量，直接用,需要先减量做测试时，用上面的 data = data0.head(1000) 替换下面的 data=data0
+data = data0
+del data0
+#%%
+data.head()
+#%%
+# print(data['Summary-摘要'])
+#%%
+# 设置所需函数
+def read(path):
+    f = open(path,encoding="utf8")
+    data = []
+    for line in f.readlines():
+        data.append(line)
+    return data
+
+# 加载停用词表
+def getword(path):
+    swlis = []
+    for i in read(path):
+        outsw = str(i).replace('\n','')
+        swlis.append(outsw)
+    return swlis
+#%%
+# # 构建分词器
+# import jieba
+import jieba_fast as jieba    # 和import jieba 二选一，但jieba_fast至少快2-3倍，后续代码无需变动
+
+# 加载用户词表
+jieba.load_userdict('关键词表.txt')
+
+# 停用词表
+stopLists = list(getword('stop_words_jieba.txt')) # 此处谨慎添加停用词,仅供必要的清洗用,因为这里添加停用词可能会影响文本的语义,干扰后续的模型计算。语义模型不可使用过度清洗的文本！
+
+# 定义分词器
+def paperCut(intxt):
+    return [w for w in jieba.cut(intxt,cut_all=False,HMM=True) if w not in stopLists and len(w)>=1]
+def SentenceCut(doc):
+    d = str(doc)
+    d = paperCut(d)
+    d= " ".join(d)
+    return d
+#%%
+# print(stopLists)
+#%%
+# # hanlp分词器，准确度高，代价是性能消耗大，用时更长
+# import hanlp
+# # tok = hanlp.load(hanlp.pretrained.tok.COARSE_ELECTRA_SMALL_ZH,tasks='tok/coarse')
+# tok = hanlp.load(hanlp.pretrained.tok.MSR_TOK_ELECTRA_BASE_CRF)
+# # 供替换：
+# # MSR_TOK_ELECTRA_BASE_CRF # 实体识别较好，比如机构名称
+# # COARSE_ELECTRA_SMALL_ZH # 目前测试最平衡最好用的
+# def SentenceCut(doc):
+#     d = str(doc)
+#     d = d.replace(" ","")
+#     result = tok(d)
+#     result = " ".join(result)
+#     return result
+#%%
+# # hanlp多用途模型分词，对实体的判断可能会更准一些，但似乎会出现些意想不到的词，可尝试，但不建议
+# # 更多模型 https://hanlp.hankcs.com/docs/api/hanlp/pretrained/mtl.html
+# import hanlp
+# HanLP = hanlp.load(hanlp.pretrained.mtl.CLOSE_TOK_POS_NER_SRL_DEP_SDP_CON_ELECTRA_BASE_ZH)
+# def SentenceCut(doc):
+#     d = str(doc)
+#     result = HanLP(d, tasks='tok/coarse')
+#     result = " ".join(result['tok/coarse'])
+#     return result
+#%%
+# 对摘要执行分词
+data['Summary-摘要'] = data['Summary-摘要'].apply(SentenceCut)
+#%% md
+# **主题模型**
+#%% md
+## 模型训练
+#%%
+# 载入bertopic库
+from bertopic import BERTopic
+from bertopic.vectorizers import ClassTfidfTransformer
+from hdbscan import HDBSCAN
+from sklearn.feature_extraction.text import CountVectorizer
+from umap import UMAP
+#%%
+# 一个经验公式，供参考
+import math
+n = 0.06 #用于计算主题最低包含文档数量的参数，学术文献建议不高于0.1（因为存在对应专门领域的小主题），评论区采集的文字建议0.2（因为很多同质观点）
+p = math.log10(len(data))
+q = math.ceil(n*math.pow(p,4))# 一个经验公式，用于控制最小聚类大小。对于学术文献，q大于等于3是合适的，这是因为如果一项研究有较高价值或展开了一个新领域，往往会有同类研究跟进（+1），和原作者自己的续作（+1），即使出现时间较短，有3篇或3篇以上的文献属于该主题也是大概率事件.也可以不用此公式，直接设定q的数值。评论弹幕等，同质性强，建议设置更高的数值。
+# q = 3
+print(q)
+
+#%%
+# 模型路径设置
+model_path = os.getcwd() + '\\' +'embedding_models\\moka-ai_m3e-small'
+#%%
+# 加载sklearn的停用词
+stop_words_path = os.getcwd() + '\\' +'stop_words_sklearn.txt'
+stop_words_sklearn = list(getword(stop_words_path))#在sklearn处理的阶段再加停用词，这里停用词可以按需添加，不影响句嵌入模型运行。
+#%%
+# 设定模型参数
+model = BERTopic(verbose=True,
+                 language="multilingual",
+                 embedding_model=model_path,
+                 umap_model=UMAP(n_neighbors=64,
+                                  n_components=128, # 参考LSA降维的参数设置为128，未必是最优
+                                  min_dist=0.00,
+                                  metric='cosine',
+                                  random_state=100 # 随机种子
+                                 ),
+                 hdbscan_model=HDBSCAN(min_cluster_size=q,
+                                       metric='euclidean',
+                                       core_dist_n_jobs=4,
+                                       prediction_data=True),
+                 vectorizer_model=CountVectorizer(
+                                                  stop_words=stop_words_sklearn,# 没有在sklearn中分词，而是预先分词，但停用词需要加在此处
+                                                  ngram_range=(1,1),
+                                                  binary=False
+                                                  ),
+                 ctfidf_model=ClassTfidfTransformer(
+                                                   bm25_weighting=True,#可选参数，BM25是一种优化的TFIDF类算法，对TFIDF的公式略有修改
+                                                   reduce_frequent_words=True),# reduce_frequent_word为True，抑制部分词语，起到软停用的作用，比如可以抑制“可以”“一下”“什么”等词汇。
+                 n_gram_range=(1,1), # 是否允许词组，比如 解决 问题 在分词阶段分开，如果参数(1，2)则允许单个词语的同时也允许长度为2的词组，2可以改任意正自然数。
+                 calculate_probabilities=True, # 若Ture，以文档归属某模型的概率实现软分类，某种意义上更符合实际，根据需要酌情使用
+                 nr_topics="auto", # 减少多少个主题，可以设置为auto，让聚类算法决定是否缩减。学术文件建议不用此参数，即使需要缩减主题，后续可以手动缩减。但如果是初次运行，可以尝试此参数。
+                 top_n_words=512, # 低于30，建议10~20，有观点认为10最优，但考虑到停用词，应适当给予余量为宜。若需主题计算余弦相似度等，那就设置很大的数值，如512，1024。
+                 min_topic_size=q)
+
+#%%
+summary = data['Summary-摘要'].tolist()
+headline_topics,prob= model.fit_transform(summary)
+#%%
+
+#%% md
+# 文档-主题概率矩阵相关处理
+(有余力的可以考虑在这个基础上编写自己的处理方法，这里只是作为接口示例，方便用户导出相关数据以便自行处理)
+#%%
+# 导出 文档-主题概率 矩阵
+df_doc_topicprob = pd.DataFrame(prob)
+df_doc_topicprob['data'] = data['Summary-摘要'].tolist()
+df_doc_topicprob['time'] = data['PubTime-发表时间'].tolist()
+df_doc_topicprob.to_csv('文档_主题概率矩阵.csv')
+df_doc_topicprob.head()
+#%%
+import numpy as np
+# print(np.shape(prob)[1])
+topic_number = np.shape(prob)[1] # prob的列数就是主题数，取出备用
+# print(topic_number)
+#%%
+df_doc_topicprob['time'] = pd.to_datetime(df_doc_topicprob['time'])
+start_time = min(df_doc_topicprob['time'])
+end_time = max(df_doc_topicprob['time'])
+print(start_time)
+print(end_time)
+#%%
+time_slices = pd.date_range(start=start_time-pd.Timedelta(days=365), end=end_time, freq='5Y')
+print(time_slices)
+#%% md
+## 主题提取与呈现
+#%%
+freq = model.get_topic_info()
+print("Number of topics: {}".format( len(freq)))
+#%%
+# freq['Representative_Docs']
+#%%
+# 减少离群文档数量
+new_topics = model.reduce_outliers(summary, headline_topics, strategy="embeddings")
+model.update_topics(summary, topics=new_topics)
+# 重新获取主题及主题词列表
+model.get_topic_info()
+# 查看某个主题排名前10的主题词
+model.get_topic(0)
+#%% md
+
+#%%
+a_topic = freq.iloc[2]["Topic"] # Select one topic
+model.get_topic(a_topic) # Show the words and their c-TF-IDF scores
+#%% md
+## 所获主题的处理
+#%%
+# 用于事后减少主题数，慎用
+# model.reduce_topics(data['Summary-摘要'], nr_topics=5)，和模型中的nr_topic参数等效，但是是事后缩减，首次执行切勿运行此单元
+#%%
+# 对指定的两个或多个主题进行融合，慎用
+# topics_to_merge = [1,4] # 主题的需要，注意，py中是从0开始计数的，首次执行切不可运行此单元，应在确定具体哪些主题需要融合成一个之后，再执行
+# model.merge_topics(data['Summary-摘要'], topics_to_merge)
+#%%
+# 柱状图可视化
+fig_bar = model.visualize_barchart(
+                         top_n_topics=16, # 前多少个主题
+                         n_words=8, # 每个主题展示多少个词汇
+                         title='主题词得分', # 若报错，将此行注视掉
+                         width=250,height=300 # 图片大小,可调，下面的代码里，其他可视化的函数中这两个参数也可调
+                         )
+#%%
+fig_bar
+#%%
+from plotly.io import write_html
+with open("主题词得分.html", "w", encoding="utf8") as file:
+    write_html(fig_bar, file)
+#%% md
+主题关系图
+#%%
+model.visualize_topics()
+#%% md
+## 层次聚类的可视化
+#%%
+fig_hierarchy = model.visualize_hierarchy(top_n_topics=16,
+                          title='层次聚类图',
+                          width=600,
+                          height=600)
+#%%
+fig_hierarchy
+#%%
+with open("层次聚类图.html", "w", encoding="utf8") as file:
+    write_html(fig_hierarchy, file)
+#%% md
+# 文档主题聚类图
+#%%
+fig_doc_topic = model.visualize_documents(
+                          topics=list(range(0,16)),
+                          docs=summary,
+                          hide_document_hover=False,
+                          title='文本主题聚类图',# 不同的文本按主题聚类
+                          width=1200,
+                          height=750
+                          )
+fig_doc_topic
+# 聚类运行时间较久，请根据需要选用
+#%%
+with open("文档主题聚类.html", "w", encoding="utf8") as file:
+    write_html(fig_doc_topic, file)
+#%% md
+# **DTM**
+基于bertopic的动态主题模型
+#%%
+timepoint = data['PubTime-发表时间'].tolist()
+timepoint = pd.to_datetime(timepoint)
+topics_over_time = model.topics_over_time(summary, # 由摘要生成的变量
+                                          timepoint, # 发表时间生成的变量
+                                          # datetime_format='mixed', # 知网题录给出的格式可以直接被mix参数的时间函数识别
+                                          nr_bins=20,
+                                          evolution_tuning=True)
+#%%
+fig_DTM = model.visualize_topics_over_time(topics_over_time,
+                                 top_n_topics=7,
+                                 title='DTM',
+                                 width=800,
+                                 height=350)
+#%%
+fig_DTM
+#%%
+with open("DTM图.html", "w", encoding="utf8") as file:
+    write_html(fig_DTM, file)
+#%% md
+# **主题相似度热力图**
+#%%
+
+#%%
+fig_heatmap = model.visualize_heatmap(top_n_topics=13,
+                                      title='主题相似度热力图',
+                                      width=800,
+                                      height=600)
+fig_heatmap
+#%%
+with open("主题相似度热力图.html", "w", encoding="utf8") as file:
+    write_html(fig_heatmap, file)
+#%% md
+# **某篇文档的主题概率**
+#%%
+model.visualize_distribution(model.probabilities_[1], min_probability=0.015)
+#%% md
+# **文档主题预测**
+#%%
+
+# Get the topic predictions
+topic_prediction = model.topics_[:]
+# Save the predictions in the dataframe
+data['主题预测'] = topic_prediction
+# Take a look at the data
+data.head()
+
+#%%
+data.to_excel("文档主题预测.xlsx",index=True)
+#%% md
+# **更多参考资料**
+[BERTopic Algorithm](https://maartengr.github.io/BERTopic/algorithm/algorithm.html)    
+ [BERTopic FAQ](https://maartengr.github.io/BERTopic/faq.html#:~:text=Why%20are%20the%20results%20not%20consistent%20between%20runs%3F,-%C2%B6&text=Due%20to%20the%20stochastic%20nature,topics%20that%20suit%20you%20best.)  
+ [BERTopic Github](https://github.com/MaartenGr/BERTopic)
+ [模型参数详解](https://maartengr.github.io/BERTopic/getting_started/quickstart/quickstart.html)
+#%% md
