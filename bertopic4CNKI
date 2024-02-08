@@ -10,16 +10,8 @@
     conda install -c zeus1942 hdbscan
     pip install BERTopic
     如果第一条失败，则运行第二条，第二条失败再运行第三条；如果第一条成功，则直接运行第四条。运行成功则重启jupyter然后将这几行恢复注释，运行后面的代码
-2.[模型参数详解](https://maartengr.github.io/BERTopic/getting_started/quickstart/quickstart.html)在使用bertopic前应对模型有所了解，不同的参数配置会产生不一样的效果，一个理想的结果是使用不同参数搭配反复调试之后得到的。代码所提供的是经笔者测试较为通用的搭配，最适合您的语料的参数搭配未必是当前的搭配。
-3.bertopic应用于中文的另一种分词方式是在sklearn中构建jieba分词器，但是经测试，效果较差，故采用了现在的预先分词的方式。
-4.stop_words_jieba.txt和stop_words_sklearn是两个停用词表，其作用不同，前者用于必要的文本清洗，过度清洗会影响语义模型的正常运作，其停用词需非常谨慎的添加；后者是标准的停用词表，可以将不需要的词语直接写到里面，注意格式为每行一个词语，最后一行不能空行，添加之后保存再重新运行代码。
-5.句嵌入模型(embedding model)的选择有很大的自由度，models文件夹中提供经测试中文或中英混合效果较好的两组模型：
-    <1> m3e系列模型，这是一个在严肃文本上表现较好的模型（学术文本建议使用base或large模型）
-    <2> 二郎神系列模型的longform-330M版本，纯中文微调，使用时请引用以下论文： Wang J, Zhang Y, Zhang L, et al. Fengshenbang 1.0: Being the foundation of chinese cognitive intelligence[J]. arXiv preprint arXiv:2209.02970, 2022.
-    <3>更多模型可从hugging face获取，参数填写方式：embedding_model='huggingface模型链接中co后面的部分'，如
-    embedding_model = 'moka-ai/m3e-base'   然后就会自动从hugging face下载（但须注意网络连接问题）
-6.句嵌入模型是整个代码运行中耗时最长的部分，建议具有英伟达显卡的机器运行。若无相应独显，而是在CPU上运行，对超过3000的样本量进行处理时，运行时间可能超过20分钟。
-7.可替换hanlp分词，对命名实体的识别效果有提高，当语料涉及大量命名实体时，考虑使用该分词方法。
+
+
 
 #%%
 # pip install hdbscan
