@@ -96,32 +96,7 @@ def SentenceCut(doc):
     d = paperCut(d)
     d= " ".join(d)
     return d
-#%%
-# print(stopLists)
-#%%
-# # hanlp分词器，准确度高，代价是性能消耗大，用时更长
-# import hanlp
-# # tok = hanlp.load(hanlp.pretrained.tok.COARSE_ELECTRA_SMALL_ZH,tasks='tok/coarse')
-# tok = hanlp.load(hanlp.pretrained.tok.MSR_TOK_ELECTRA_BASE_CRF)
-# # 供替换：
-# # MSR_TOK_ELECTRA_BASE_CRF # 实体识别较好，比如机构名称
-# # COARSE_ELECTRA_SMALL_ZH # 目前测试最平衡最好用的
-# def SentenceCut(doc):
-#     d = str(doc)
-#     d = d.replace(" ","")
-#     result = tok(d)
-#     result = " ".join(result)
-#     return result
-#%%
-# # hanlp多用途模型分词，对实体的判断可能会更准一些，但似乎会出现些意想不到的词，可尝试，但不建议
-# # 更多模型 https://hanlp.hankcs.com/docs/api/hanlp/pretrained/mtl.html
-# import hanlp
-# HanLP = hanlp.load(hanlp.pretrained.mtl.CLOSE_TOK_POS_NER_SRL_DEP_SDP_CON_ELECTRA_BASE_ZH)
-# def SentenceCut(doc):
-#     d = str(doc)
-#     result = HanLP(d, tasks='tok/coarse')
-#     result = " ".join(result['tok/coarse'])
-#     return result
+
 #%%
 # 对摘要执行分词
 data['Summary-摘要'] = data['Summary-摘要'].apply(SentenceCut)
