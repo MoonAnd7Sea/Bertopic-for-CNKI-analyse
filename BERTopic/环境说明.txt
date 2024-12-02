@@ -1,0 +1,4 @@
+绝大多数安装问题都卡在hdbscan库的安装上，
+目前测试最稳定的安装hdbscan库的方法是：
+在文件夹所给的anaconda环境中，使用anaconda prompt（安装完成后可以在开始菜单找到），输入并运行：
+conda install -c conda-forge hdbscan
